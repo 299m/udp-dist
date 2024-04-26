@@ -12,7 +12,7 @@ import "udp-dist/routing"
 
 type Config struct {
 	ListenOn         []int //// Array of ports to listen on
-	TunnelTo         int   //// Port to tunnel to and from
+	TunnelTo         int   //// Port to remotetunnel to and from
 	TunnelRemoteAddr string
 	TunnelFrom       int
 
@@ -38,8 +38,9 @@ type Engine struct {
 	recvbufsize int
 	queuesize   int
 
-	tunnel     *net.UDPConn
-	tunnelsend chan *Packet
+	remotetunnel *net.UDPConn //// send stuff on the tunnel
+	localtunnel  *net.UDPConn //// receive stuff on the tunnel
+	tunnelsend   chan *Packet
 
 	localclients map[int64]*net.UDPConn
 
@@ -59,11 +60,15 @@ func NewEngine(bufsize int, queusize int, config *Config) *Engine {
 		config:       config,
 	}
 	//// if we are local, start all the local listeners
-	//// and the tunnel listener
+	//// and the remotetunnel listener
 	//// and the distributor
-	tunnel, err := net.Dial("udp", fmt.Sprintf("%s:%d", config.TunnelRemoteAddr, config.TunnelTo))
+	remotetunnel, err := net.Dial("udp", fmt.Sprintf("%s:%d", config.TunnelRemoteAddr, config.TunnelTo))
 	util.CheckError(err)
-	eng.tunnel = tunnel.(*net.UDPConn)
+	eng.remotetunnel = remotetunnel.(*net.UDPConn)
+	tunnelfromaddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", config.TunnelFrom))
+	util.CheckError(err)
+	localtunnel, err := net.ListenUDP("udp", tunnelfromaddr)
+	eng.localtunnel = localtunnel
 	go eng.distribute()
 	go eng.processSendToTunnel()
 	if eng.islocal {
@@ -71,7 +76,7 @@ func NewEngine(bufsize int, queusize int, config *Config) *Engine {
 		for _, port := range config.ListenOn {
 			addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", port))
 			util.CheckError(err)
-			go eng.funnel(addr)
+			go eng.funnelListen(addr)
 		}
 	}
 	return eng
@@ -81,7 +86,7 @@ func NewEngine(bufsize int, queusize int, config *Config) *Engine {
 func (p *Engine) Close() {
 	p.quit = true
 	p.tunnelsend <- nil
-	p.tunnel.Close()
+	p.remotetunnel.Close()
 	for _, conn := range p.localclients {
 		conn.Close()
 	}
@@ -92,13 +97,13 @@ func (p *Engine) sendToTunnel(message []byte, addr net.Addr) {
 }
 
 func (p *Engine) processSendToTunnel() {
-	fmt.Println("Starting to process packets to tunnel")
+	fmt.Println("Starting to process packets to remotetunnel")
 	for !p.quit {
 		packet := <-p.tunnelsend
 		if packet == nil {
 			break
 		}
-		fmt.Println("Processing packet to tunnel")
+		fmt.Println("Processing packet to remotetunnel")
 		message := packet.data
 		addr := packet.addr
 		var fullmsg []byte
@@ -113,7 +118,7 @@ func (p *Engine) processSendToTunnel() {
 			addratlocal := p.router.FindRouteById(int64(addr.Port))
 			fullmsg = p.udpmsg.Write(message, addratlocal)
 		}
-		x, err := p.tunnel.Write(fullmsg)
+		x, err := p.remotetunnel.Write(fullmsg)
 		util.CheckError(err)
 		if x != len(fullmsg) {
 			log.Panicln("Failed to write full message", x, len(fullmsg))
@@ -121,54 +126,69 @@ func (p *Engine) processSendToTunnel() {
 	}
 }
 
-// // Should be run in a thread to recv on a specific port and send to the tunnel
-func (p *Engine) funnel(from *net.UDPAddr) {
+// // Should be run in a thread to recv on a specific port and send to the remotetunnel
+func (p *Engine) funnelListen(from *net.UDPAddr) {
 	recvconn, err := net.ListenUDP("udp", from)
 	util.CheckError(err)
 	defer recvconn.Close()
 	fmt.Println("Starting to listen on ", from.String())
+	p.funnelRunner(recvconn)
+}
 
+func (p *Engine) funnelRunner(recvconn *net.UDPConn) {
 	for {
 		//// let try just using Golang's GC to manage the buffer
 		buf := make([]byte, p.recvbufsize)
 		n, err := recvconn.Read(buf)
 		if errors.Is(err, net.ErrClosed) {
-			fmt.Println("*********** Funnel Connection closed ************", from.String())
+			fmt.Println("*********** Funnel Connection closed ************", recvconn.LocalAddr().String())
 			break
 		}
 		util.CheckError(err)
 
-		fmt.Println("Received ", n, " bytes from ", from.String())
-		/// tunnel it
-		p.sendToTunnel(buf[:n], from)
+		fmt.Println("Received ", n, " bytes from ", recvconn.LocalAddr().String())
+		/// remotetunnel it
+		p.sendToTunnel(buf[:n], recvconn.LocalAddr())
 	}
 }
 
-func (p *Engine) sendToEndpoint(msgdata []byte, addr *net.UDPAddr) (raddr *net.UDPAddr) {
+func (p *Engine) sendToEndpoint(msgdata []byte, addr *net.UDPAddr) (recvconn *net.UDPConn) {
 	/// Dial a connection for this address if it doesn't exist
 	rid := p.router.FindOrAddRouteByAddr(addr)
+	fmt.Println(1.1)
 	var err error
 	if _, ok := p.localclients[rid]; !ok {
+		fmt.Println(1.2)
 		if !p.islocal {
+			fmt.Println(1.3, " port ", addr.Port)
 			remoteaddr := p.config.LocalPortToRemoteAddr[addr.Port]
-			raddr, err = net.ResolveUDPAddr("udp", remoteaddr)
+			raddr, err := net.ResolveUDPAddr("udp", remoteaddr)
 			util.CheckError(err)
 			addr = raddr
+			fmt.Println(1.4, raddr.String())
 		}
+		fmt.Println(1.5)
+
 		conn, err := net.DialUDP("udp", nil, addr)
 		util.CheckError(err)
 		p.localclients[rid] = conn
+		recvconn = conn //// Only set this if it's a new connection
 	}
+	fmt.Println(1.7)
+
 	conn := p.localclients[rid]
+	fmt.Println("Writing msg to ", conn.RemoteAddr())
 	_, err = conn.Write(msgdata)
 	util.CheckError(err)
-	return raddr
+	fmt.Println(1.8)
+	return
 }
 
-// // Read from the tunnel and send to the correct port
+// // Read from the remotetunnel and send to the correct port
 func (p *Engine) distribute() {
-	////on the distributor side we have 1 thread reading from the tunnel, so the whole
+	////on the distributor side we have 1 thread reading from the remotetunnel, so the whole
 	/// buffer is for this thread
+	fmt.Println("Starting distributor, receiving on ", p.localtunnel.LocalAddr())
 	buf := make([]byte, p.recvbufsize*p.queuesize)
 	offset := 0
 	for {
@@ -177,32 +197,40 @@ func (p *Engine) distribute() {
 			copy(buf, buf[offset:])
 			offset = 0
 		}
-		n, err := p.tunnel.Read(buf[offset:])
+		n, err := p.localtunnel.Read(buf[offset:])
 		if errors.Is(err, net.ErrClosed) {
 			fmt.Println("*********** Dist Connection closed ************")
 			break
 		}
 		util.CheckError(err)
+		fmt.Println(1)
 
 		for n != 0 {
 			msgdata, needmore, addr, nextmsgoffset, err := p.udpmsg.Read(buf[offset : offset+n])
 			util.CheckError(err)
+			fmt.Println(2)
 
 			if needmore {
 				/// We need to read more data
 				/// We need to read in the next message and append it to the current message
 				/// then pass it in again
+				fmt.Println(3)
 				break
 			}
-			raddr := p.sendToEndpoint(msgdata, addr)
-			if raddr != nil { /// Should only be set if we are remote and this is a new connection
-				go p.funnel(raddr)
+			fmt.Println(4)
+
+			fmt.Println("Sending msg to ", addr.String())
+			recvconn := p.sendToEndpoint(msgdata, addr)
+			if recvconn != nil { /// Should only be set if we are remote and this is a new connection
+				go p.funnelRunner(recvconn)
 			}
 			n -= nextmsgoffset
 			if n < 0 {
 				log.Panicln("N is negative ", n, offset, nextmsgoffset)
 			}
 			offset += nextmsgoffset
+			fmt.Println(5)
+
 		}
 	}
 }
