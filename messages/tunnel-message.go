@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"github.com/299m/util/util"
+	"log"
 	"net"
 )
 
@@ -38,10 +39,9 @@ func NewTunnelMessage(bufsize int) *TunnelMessage {
 
 func (t *TunnelMessage) putUdpHeader(addr *net.UDPAddr, datasize int) {
 	t.buf.Reset()
-	ip4 := addr.IP.To4()
 	info := int16(ISUDP)
 	addrsize := IPADDRSIZE //// fixed size header
-	if addr.IP != nil && ip4 == nil {
+	if addr.IP != nil && addr.IP.To4() == nil {
 		info = int16(ISUDP | ISIPV6)
 	} else if len(addr.IP) == net.IPv4len {
 		info = int16(ISUDP | ISIPV4)
@@ -104,6 +104,9 @@ func (t *TunnelMessage) retrieveUdpHeader(data []byte) (addr *net.UDPAddr, msgda
 }
 
 func (t *TunnelMessage) Write(data []byte, from *net.UDPAddr) (fullmsg []byte) {
+	if from == nil {
+		log.Panic("Nil address in tunnel write")
+	}
 	t.putUdpHeader(from, len(data))
 	t.buf.Write(data)
 	return t.buf.Bytes()

@@ -114,8 +114,16 @@ func (p *Engine) processSendToTunnel() {
 			p.router.FindOrAddRouteByAddr(addr)
 		} else { // REMOTE SIDE
 			/// If we are not local, we need to lookup the return addr (the UDP address from the local side) and put that in the message
-			/// The send UDP side should have filled this in for us based on sending port
-			addratlocal := p.router.FindRouteById(int64(addr.Port))
+			/// The send UDP side should have created an association between our recv address and the local (other end of the tunnel) address
+			rid, found := p.router.FindRouteByAddr(addr)
+			if !found {
+				log.Panicln("Failed to find route by addr ", addr)
+			}
+			localrid, found := p.router.FindAssociation(rid)
+			if !found {
+				log.Panicln("Failed to find association for ", rid)
+			}
+			addratlocal := p.router.FindRouteById(localrid)
 			fullmsg = p.udpmsg.Write(message, addratlocal)
 		}
 		x, err := p.remotetunnel.Write(fullmsg)
@@ -156,6 +164,11 @@ func (p *Engine) funnelRunner(recvconn *net.UDPConn) {
 
 func (p *Engine) sendToEndpoint(msgdata []byte, addr *net.UDPAddr) {
 	/// Dial a connection for this address if it doesn't exist
+	fmt.Println("Find or add route by addr ", addr)
+
+	/// addr is the address from the message
+	/// if we are local, it should be the address ot the client to send to
+	/// if we are remote, it should be the address of the local client (at the other, local, end of the tunnel)
 	rid := p.router.FindOrAddRouteByAddr(addr)
 	var err error
 	if _, ok := p.localclients[rid]; !ok {
@@ -165,8 +178,9 @@ func (p *Engine) sendToEndpoint(msgdata []byte, addr *net.UDPAddr) {
 			util.CheckError(err)
 			addr = raddr
 		}
-
 		conn, err := net.DialUDP("udp", nil, addr)
+		remoteid := p.router.FindOrAddRouteByAddr(conn.LocalAddr().(*net.UDPAddr))
+		p.router.Associate(rid, remoteid)
 
 		///// We must start our listening thread early - or it may miss the response
 		go p.funnelRunner(conn)

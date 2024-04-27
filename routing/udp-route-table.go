@@ -7,17 +7,39 @@ import (
 )
 
 type UdpRoutes struct {
-	routes map[int64]*net.UDPAddr
-	ids    map[net.Addr]int64
+	routes       map[int64]*net.UDPAddr
+	ids          map[net.Addr]int64
+	associations map[int64]int64
+	assoclock    sync.RWMutex
+
 	rwlock sync.RWMutex
 	nextid int64
 }
 
 func NewUdpRoutes() *UdpRoutes {
 	return &UdpRoutes{
-		routes: make(map[int64]*net.UDPAddr),
-		ids:    make(map[net.Addr]int64),
+		routes:       make(map[int64]*net.UDPAddr),
+		ids:          make(map[net.Addr]int64),
+		associations: make(map[int64]int64),
 	}
+}
+
+func (u *UdpRoutes) Associate(localid, remoteid int64) {
+	u.assoclock.Lock()
+	defer u.assoclock.Unlock()
+
+	u.associations[localid] = remoteid
+	u.associations[remoteid] = localid
+}
+
+func (u *UdpRoutes) FindAssociation(id int64) (int64, bool) {
+	u.assoclock.RLock()
+	defer u.assoclock.RUnlock()
+
+	if assoc, ok := u.associations[id]; ok {
+		return assoc, true
+	}
+	return 0, false
 }
 
 func (u *UdpRoutes) AddRoute(from *net.UDPAddr, id int64) {

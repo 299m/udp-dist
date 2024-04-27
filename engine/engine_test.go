@@ -143,14 +143,11 @@ func simulateRemoteClient(conn *net.UDPConn, msgs chan *Packet) {
 			data: cpybuf,
 		}
 		//// reply with the same message
-		for i := 0; i < 1000; i++ {
-			fmt.Println("Replying to ", returnaddr.String(), " with ", n, " bytes")
-			x, err := conn.WriteToUDP(buff[:n], returnaddr.(*net.UDPAddr))
-			util.CheckError(err)
-			if x != n {
-				fmt.Println("Error writing to remote client ", x, n)
-			}
-			time.Sleep(10 * time.Millisecond)
+		fmt.Println("Replying to ", returnaddr.String(), " with ", n, " bytes")
+		x, err := conn.WriteToUDP(buff[:n], returnaddr.(*net.UDPAddr))
+		util.CheckError(err)
+		if x != n {
+			fmt.Println("Error writing to remote client ", x, n)
 		}
 	}
 }
@@ -223,9 +220,10 @@ func Test_RemoteEngineDistributor(t *testing.T) {
 		to := time.NewTimer(2 * time.Second)
 		select {
 		case recvdmsg := <-tunnelrecvdmsgs:
+			fmt.Println("Received message from tunnel, ", string(recvdmsg))
 			msgdata, needmore, addr, _, err := tmsghandler.Read(recvdmsg)
 
-			indxpart := strings.Split(string(recvdmsg), " ")[0]
+			indxpart := strings.Split(string(msgdata), " ")[0]
 			indx, err := strconv.ParseInt(indxpart, 10, 32)
 			util.CheckError(err)
 			assert.False(t, needmore, "Need more is true")
