@@ -3,7 +3,6 @@ package messages
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"github.com/299m/util/util"
 	"net"
 )
@@ -85,8 +84,6 @@ func (t *TunnelMessage) retrieveUdpHeader(data []byte) (addr *net.UDPAddr, msgda
 	copy(ipaddr, data[headersize:headersize+addrsize])
 	headersize += addrsize
 
-	fmt.Println("IP address", ipaddr)
-
 	port := binary.LittleEndian.Uint32(data[headersize:])
 	headersize += binary.Size(port)
 	size := binary.LittleEndian.Uint32(data[headersize:])
@@ -101,7 +98,6 @@ func (t *TunnelMessage) retrieveUdpHeader(data []byte) (addr *net.UDPAddr, msgda
 		addr.IP = ipaddr
 	}
 	needmore = len(data) < int(size)
-	fmt.Println("Data size", size, "msgdata size", len(data), "needmore", needmore)
 	msgdata = data[headersize : headersize+int(size)]
 	nextmsgoffset = headersize + int(size)
 	return

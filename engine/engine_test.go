@@ -129,12 +129,28 @@ func simulateRemoteClient(conn *net.UDPConn, msgs chan *Packet) {
 
 	for {
 		buff := make([]byte, 2048)
-		n, err := conn.Read(buff)
+		n, returnaddr, err := conn.ReadFrom(buff)
+		if errors.Is(err, net.ErrClosed) {
+			fmt.Println("*********** Simulator Client Connection closed ************")
+			break
+		}
 		util.CheckError(err)
 		fmt.Println("Queuing message from ", conn.LocalAddr().String())
+		cpybuf := make([]byte, n)
+		copy(cpybuf, buff[:n])
 		msgs <- &Packet{
 			addr: conn.LocalAddr().(*net.UDPAddr),
-			data: buff[:n],
+			data: cpybuf,
+		}
+		//// reply with the same message
+		for i := 0; i < 1000; i++ {
+			fmt.Println("Replying to ", returnaddr.String(), " with ", n, " bytes")
+			x, err := conn.WriteToUDP(buff[:n], returnaddr.(*net.UDPAddr))
+			util.CheckError(err)
+			if x != n {
+				fmt.Println("Error writing to remote client ", x, n)
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 }
@@ -148,6 +164,8 @@ func Test_RemoteEngineDistributor(t *testing.T) {
 	for _, endpoint := range mockendpoints {
 		defer endpoint.Close()
 	}
+	tunnelrecvdmsgs := make(chan []byte, 5)
+	go recv(mocktunnel, tunnelrecvdmsgs)
 	//// Send a message to one of the mock endpoints
 	msgs := make([][]byte, 3)
 	msgs[0] = []byte("0 zz12345678901234567890123456789012345678901234567890123456789012345678901234567890aa")
@@ -161,9 +179,9 @@ func Test_RemoteEngineDistributor(t *testing.T) {
 	util.CheckError(err)
 	sendaddr[2], err = net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", LISTENPORT3))
 	util.CheckError(err)
-	msgsrecvd := make(chan *Packet, 50)
+	remotemsgsrecvd := make(chan *Packet, 50)
 	for _, conn := range mockendpoints {
-		go simulateRemoteClient(conn, msgsrecvd)
+		go simulateRemoteClient(conn, remotemsgsrecvd)
 	}
 
 	/// The mock remotetunnel is a listener - we need to write to it
@@ -185,12 +203,12 @@ func Test_RemoteEngineDistributor(t *testing.T) {
 	for range msgs {
 		to := time.NewTimer(2 * time.Second)
 		select {
-		case recvdmsg := <-msgsrecvd:
+		case recvdmsg := <-remotemsgsrecvd:
 			//the messages should be the same and the address should match the one for given index
 			indxpart := strings.Split(string(recvdmsg.data), " ")[0]
 			indx, err := strconv.ParseInt(indxpart, 10, 32)
 			util.CheckError(err)
-			assert.Equal(t, sendaddr[indx].String(), recvdmsg.addr.String(), "Address mismatch")
+			assert.Equal(t, mockendpoints[indx].LocalAddr().String(), recvdmsg.addr.String(), "Address mismatch")
 			assert.Equal(t, msgs[indx], recvdmsg.data, "Data mismatch")
 		case <-to.C:
 			t.Error("Timed out waiting for message")
@@ -198,4 +216,24 @@ func Test_RemoteEngineDistributor(t *testing.T) {
 		}
 	}
 
+	tmsghandler := messages.NewTunnelMessage(2048)
+
+	//// Make sure we can also send messages back and they go into the tunnel
+	for range msgs {
+		to := time.NewTimer(2 * time.Second)
+		select {
+		case recvdmsg := <-tunnelrecvdmsgs:
+			msgdata, needmore, addr, _, err := tmsghandler.Read(recvdmsg)
+
+			indxpart := strings.Split(string(recvdmsg), " ")[0]
+			indx, err := strconv.ParseInt(indxpart, 10, 32)
+			util.CheckError(err)
+			assert.False(t, needmore, "Need more is true")
+			assert.Equal(t, sendaddr[indx].String(), addr.String(), "Address mismatch")
+			assert.Equal(t, msgs[indx], msgdata, "Data mismatch")
+		case <-to.C:
+			t.Error("Timed out waiting for message")
+			break
+		}
+	}
 }
