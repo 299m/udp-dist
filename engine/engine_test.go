@@ -1,10 +1,14 @@
 package engine
 
 import (
+	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"github.com/299m/util/util"
 	"github.com/stretchr/testify/assert"
+	"log"
+	"math/big"
 	"net"
 	"strconv"
 	"strings"
@@ -229,6 +233,67 @@ func Test_RemoteEngineDistributor(t *testing.T) {
 			assert.False(t, needmore, "Need more is true")
 			assert.Equal(t, sendaddr[indx].String(), addr.String(), "Address mismatch")
 			assert.Equal(t, msgs[indx], msgdata, "Data mismatch")
+		case <-to.C:
+			t.Error("Timed out waiting for message")
+			break
+		}
+	}
+}
+
+func Test_DistributorMessageSplit(t *testing.T) {
+	mockeng := NewMockEngine()
+
+	/// Send multiple messages to the distributor - make sure message boundaries are messed up
+	/// Check it correctly splits them
+	eng, mocktunnel, mockendpoints := setup(false)
+	defer mocktunnel.Close()
+	defer eng.Close()
+	for _, endpoint := range mockendpoints {
+		defer endpoint.Close()
+	}
+
+	msgs := make([][]byte, 100)
+	preffix := []string{"aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj", "kk", "ll", "mm", "nn", "oo", "pp", "qq", "rr", "ss", "tt"}
+	for i := 0; i < 100; i++ {
+		msgs[i] = []byte(fmt.Sprintf("%d %s12345678901234567890123456789012345678901234567890123456789012345678901234567890aa", i, preffix[i%len(preffix)]))
+	}
+	eng.sendToEndpointFunc = mockeng.sendToEndpointFunc
+
+	/// write messages onto a buffer and send in parts to the distributor
+	buf := bytes.Buffer{}
+	mt := messages.NewTunnelMessage(2048)
+	for i, msg := range msgs {
+		fullmsg := mt.Write(msg, mockendpoints[i%len(mockendpoints)].LocalAddr().(*net.UDPAddr))
+		buf.Write(fullmsg)
+	}
+	/// Now send the buffer in parts to the distributor
+	tunaddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("localhost:%d", config.TunnelFrom))
+	conn, err := net.DialUDP("udp", nil, tunaddr)
+	fmt.Println("Send message to ", fmt.Sprintf("localhost:%d", config.TunnelFrom))
+	util.CheckError(err)
+	max := big.NewInt(2048)
+	for n := 0; n < buf.Len(); {
+		send, err := rand.Int(rand.Reader, max)
+		util.CheckError(err)
+		fmt.Println("Writing ", send.Int64(), " bytes")
+		x, err := conn.Write(buf.Bytes()[n : n+int(send.Int64())])
+		util.CheckError(err)
+		if x != int(send.Int64()) {
+			log.Panicln("Error writing to mocktunnel ", x, send.Int64())
+		}
+		n += int(send.Int64())
+	}
+
+	///Check the messages
+	for range msgs {
+		to := time.NewTimer(2 * time.Second)
+		select {
+		case recvdmsg := <-mockeng.incoming:
+			indxpart := strings.Split(string(recvdmsg.data), " ")[0]
+			indx, err := strconv.ParseInt(indxpart, 10, 32)
+			util.CheckError(err)
+			assert.Equal(t, mockendpoints[int(indx)%len(mockendpoints)].LocalAddr().String(), recvdmsg.addr.String(), "Address mismatch")
+			assert.Equal(t, msgs[indx], recvdmsg.data, "Data mismatch")
 		case <-to.C:
 			t.Error("Timed out waiting for message")
 			break

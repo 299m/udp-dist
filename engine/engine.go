@@ -46,6 +46,9 @@ type Engine struct {
 
 	config *Config
 	quit   bool
+
+	//// For testing, make this a func ptr
+	sendToEndpointFunc func(msgdata []byte, addr *net.UDPAddr)
 }
 
 func NewEngine(bufsize int, queusize int, config *Config) *Engine {
@@ -59,6 +62,9 @@ func NewEngine(bufsize int, queusize int, config *Config) *Engine {
 		islocal:      config.IsLocal,
 		config:       config,
 	}
+
+	eng.sendToEndpointFunc = eng.sendToEndpoint //// Can be overridden for UT
+
 	//// if we are local, start all the local listeners
 	//// and the remotetunnel listener
 	//// and the distributor
@@ -195,29 +201,38 @@ func (p *Engine) sendToEndpoint(msgdata []byte, addr *net.UDPAddr) {
 	util.CheckError(err)
 }
 
-// // Read from the remotetunnel and send to the correct port
+// // Read from the remotetunnel and send to the correct port - we may be reading from a TCP connection, so re-find our message boundaries
+// / Need to think about how to handle a missed message
 func (p *Engine) distribute() {
-	////on the distributor side we have 1 thread reading from the remotetunnel, so the whole
+	/// on the distributor side we have 1 thread reading from the remotetunnel, so the whole
 	/// buffer is for this thread
 	fmt.Println("Starting distributor, receiving on ", p.localtunnel.LocalAddr())
 	buf := make([]byte, p.recvbufsize*p.queuesize)
 	offset := 0
+	leftover := 0
 	for {
-		if len(buf)-offset < p.recvbufsize {
+		if len(buf)-(offset+leftover) < p.recvbufsize {
 			/// We need to shift the buffer
-			copy(buf, buf[offset:])
+			fmt.Println("Shift buffer total: ", offset+leftover, ": ", offset, leftover)
+			copy(buf, buf[offset+leftover:])
 			offset = 0
 		}
-		n, err := p.localtunnel.Read(buf[offset:])
+		fmt.Println("Waiting to read from tunnel", p.localtunnel.LocalAddr().String())
+		n, err := p.localtunnel.Read(buf[offset+leftover:])
+		fmt.Println("Received ", leftover, " bytes from remotetunnel")
 		if errors.Is(err, net.ErrClosed) {
 			fmt.Println("*********** Dist Connection closed ************")
 			break
 		}
 		util.CheckError(err)
+		//// There may be some leftover data from the last message, add the data just read to it
+		leftover += n
 
-		for n != 0 {
-			msgdata, needmore, addr, nextmsgoffset, err := p.udpmsg.Read(buf[offset : offset+n])
+		fmt.Println("Leftover is ", leftover)
+		for leftover != 0 {
+			msgdata, needmore, addr, nextmsgoffset, err := p.udpmsg.Read(buf[offset : offset+leftover])
 			util.CheckError(err)
+			fmt.Println("Got a message ", len(msgdata), " from ", addr.String(), " needmore ", needmore, " nextmsgoffset ", nextmsgoffset)
 
 			if needmore {
 				/// We need to read more data
@@ -226,11 +241,12 @@ func (p *Engine) distribute() {
 				break
 			}
 
-			p.sendToEndpoint(msgdata, addr)
+			p.sendToEndpointFunc(msgdata, addr)
 
-			n -= nextmsgoffset
-			if n < 0 {
-				log.Panicln("N is negative ", n, offset, nextmsgoffset)
+			leftover -= nextmsgoffset
+			fmt.Println("Leftover is now ", leftover, " and nextmsgoffset is ", nextmsgoffset)
+			if leftover < 0 {
+				log.Panicln("N is negative ", leftover, offset, nextmsgoffset)
 			}
 			offset += nextmsgoffset
 		}

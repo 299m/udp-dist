@@ -97,7 +97,7 @@ func (t *TunnelMessage) retrieveUdpHeader(data []byte) (addr *net.UDPAddr, msgda
 	} else if info&uint16(ISIPV6) != 0 {
 		addr.IP = ipaddr
 	}
-	needmore = len(data) < int(size)
+	needmore = len(data) < headersize+int(size)
 	msgdata = data[headersize : headersize+int(size)]
 	nextmsgoffset = headersize + int(size)
 	return
