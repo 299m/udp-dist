@@ -215,13 +215,13 @@ func (p *Engine) distribute() {
 	for {
 		if len(buf)-(offset+leftover) < p.recvbufsize {
 			/// We need to shift the buffer
-			fmt.Println("Shift buffer total: ", offset+leftover, ": ", offset, leftover)
+			//fmt.Println("Shift buffer total: ", offset+leftover, ": ", offset, leftover)
 			copy(buf, buf[offset+leftover:])
 			offset = 0
 		}
-		fmt.Println("Waiting to read from tunnel", p.localtunnel.LocalAddr().String())
+		//fmt.Println("Waiting to read from tunnel", p.localtunnel.LocalAddr().String())
 		n, err := p.localtunnel.Read(buf[offset+leftover:])
-		fmt.Println("Received ", leftover, " bytes from remotetunnel")
+		//fmt.Println("Received ", leftover, " bytes from remotetunnel")
 		if errors.Is(err, net.ErrClosed) {
 			fmt.Println("*********** Dist Connection closed ************")
 			break
@@ -230,11 +230,11 @@ func (p *Engine) distribute() {
 		//// There may be some leftover data from the last message, add the data just read to it
 		leftover += n
 
-		fmt.Println("Leftover is ", leftover)
+		//fmt.Println("Leftover is ", leftover)
 		for leftover != 0 {
 			msgdata, needmore, addr, nextmsgoffset, err := p.udpmsg.Read(buf[offset : offset+leftover])
 			util.CheckError(err)
-			fmt.Println("Got a message ", len(msgdata), " from ", addr.String(), " needmore ", needmore, " nextmsgoffset ", nextmsgoffset)
+			//fmt.Println("Got a message ", len(msgdata), " from ", addr.String(), " needmore ", needmore, " nextmsgoffset ", nextmsgoffset)
 
 			if needmore {
 				/// We need to read more data
@@ -246,13 +246,13 @@ func (p *Engine) distribute() {
 			p.sendToEndpointFunc(msgdata, addr)
 
 			leftover -= nextmsgoffset
-			fmt.Println("Leftover is now ", leftover, " and nextmsgoffset is ", nextmsgoffset)
+			//fmt.Println("Leftover is now ", leftover, " and nextmsgoffset is ", nextmsgoffset)
 			if leftover < 0 {
 				log.Panicln("N is negative ", leftover, offset, nextmsgoffset)
 			}
 			offset += nextmsgoffset
 			p.totalrecvd += int64(nextmsgoffset)
-			fmt.Println("Total received ", p.totalrecvd)
+			//fmt.Println("Total received ", p.totalrecvd)
 		}
 	}
 }
