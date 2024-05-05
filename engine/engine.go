@@ -47,6 +47,8 @@ type Engine struct {
 	config *Config
 	quit   bool
 
+	totalrecvd int64
+
 	//// For testing, make this a func ptr
 	sendToEndpointFunc func(msgdata []byte, addr *net.UDPAddr)
 }
@@ -249,6 +251,8 @@ func (p *Engine) distribute() {
 				log.Panicln("N is negative ", leftover, offset, nextmsgoffset)
 			}
 			offset += nextmsgoffset
+			p.totalrecvd += int64(nextmsgoffset)
+			fmt.Println("Total received ", p.totalrecvd)
 		}
 	}
 }

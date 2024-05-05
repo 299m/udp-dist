@@ -275,7 +275,10 @@ func Test_DistributorMessageSplit(t *testing.T) {
 	for n := 0; n < buf.Len(); {
 		send, err := rand.Int(rand.Reader, max)
 		util.CheckError(err)
-		fmt.Println("Writing ", send.Int64(), " bytes")
+		fmt.Println("Writing ", send.Int64(), " bytes", " buf len ", buf.Len(), " n ", n)
+		if n+int(send.Int64()) > buf.Len() {
+			send = big.NewInt(int64(buf.Len() - n))
+		}
 		x, err := conn.Write(buf.Bytes()[n : n+int(send.Int64())])
 		util.CheckError(err)
 		if x != int(send.Int64()) {
@@ -299,4 +302,6 @@ func Test_DistributorMessageSplit(t *testing.T) {
 			break
 		}
 	}
+	assert.Equal(t, int64(buf.Len()), eng.totalrecvd, "Total received doesn't match")
+
 }

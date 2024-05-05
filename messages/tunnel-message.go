@@ -3,6 +3,7 @@ package messages
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"github.com/299m/util/util"
 	"log"
 	"net"
@@ -16,10 +17,12 @@ const (
 	IPADDRSIZE = 16
 )
 
-type ErrNotUdp struct{}
+type ErrNotUdp struct {
+	data int
+}
 
 func (e ErrNotUdp) Error() string {
-	return "Not a UDP packet"
+	return fmt.Sprint("Not a UDP packet ", e.data)
 }
 
 // / For UDP we need to convey additional info - so put a header in the packet that goes down the tunnel
@@ -77,7 +80,9 @@ func (t *TunnelMessage) retrieveUdpHeader(data []byte) (addr *net.UDPAddr, msgda
 	info := binary.LittleEndian.Uint16(data)
 	headersize += binary.Size(info)
 	if info&ISUDP == 0 {
-		return nil, nil, false, 0, ErrNotUdp{}
+		return nil, nil, false, 0, ErrNotUdp{
+			data: int(info),
+		}
 	}
 	addrsize := IPADDRSIZE
 	ipaddr := make([]byte, addrsize)
