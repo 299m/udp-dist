@@ -3,12 +3,12 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"github.com/299m/udp-dist/messages"
 	"github.com/299m/util/util"
 	"log"
 	"net"
-	"udp-dist/messages"
 )
-import "udp-dist/routing"
+import "github.com/299m/udp-dist/routing"
 
 type Config struct {
 	ListenOn         []int //// Array of ports to listen on

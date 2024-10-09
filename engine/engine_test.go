@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"github.com/299m/udp-dist/messages"
 	"github.com/299m/util/util"
 	"github.com/stretchr/testify/assert"
 	"log"
@@ -14,7 +15,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"udp-dist/messages"
 )
 
 const (

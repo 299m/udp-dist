@@ -1,4 +1,4 @@
-module udp-dist
+module github.com/299m/udp-dist
 
 go 1.21
 
